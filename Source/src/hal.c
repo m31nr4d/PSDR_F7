@@ -235,6 +235,8 @@ const Gpio_Pin CHARGE_POWER_SOURCE =
 //    { 4, TIM4 }
 //};
 
+__IO uint32_t timingDelay;
+
 static uint32_t halMilliseconds;
 //static uint32_t timingDelay;
 

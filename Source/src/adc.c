@@ -1,5 +1,18 @@
 #include "adc.h"
 
+__IO uint16_t uhADCxConvertedValue1;
+__IO uint16_t uhADCxConvertedValue2;
+__IO uint16_t uhADCxConvertedValue3;
+uint8_t adcConfigured;
+uint16_t sampleIndex;
+volatile uint8_t sampleRun;
+ADC_HandleTypeDef    AdcHandle1;
+ADC_HandleTypeDef    AdcHandle2;
+ADC_HandleTypeDef    AdcHandle3;
+ADC_ChannelConfTypeDef sConfig1;
+ADC_ChannelConfTypeDef sConfig2;
+ADC_ChannelConfTypeDef sConfig3;
+uint8_t wrongThings;
 
 void initAdc()
 	{

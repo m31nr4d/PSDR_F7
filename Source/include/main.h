@@ -76,8 +76,6 @@
 #include "math.h"
 #include "images.h"
 #include "i2c.h"
-#include "Adafruit_GFX.h"
-#include "Adafruit_ILI9340.h"
 #include "spi.h"
 
 //#include "stm32f4xx_hal_rcc.h"
@@ -88,9 +86,6 @@
 //#include "stm32f4xx_hal_def.h"
 //#include "core_cmInstr.h"
 
-
-TIM_HandleTypeDef    TimHandle;
-TIM_HandleTypeDef    TimHandle4;
 
 #define MASKRED    0b1111100000000000
 #define MASKGREEN  0b0000011111100000
@@ -112,9 +107,10 @@ TIM_HandleTypeDef    TimHandle4;
 #define SPIx_DMA_TX_IRQHandler           DMA2_Stream3_IRQHandler
 #define SPIx_DMA_RX_IRQHandler           DMA2_Stream0_IRQHandler
 
-SPI_HandleTypeDef SpiHandle;
-UART_HandleTypeDef UartHandle;
-
+extern SPI_HandleTypeDef SpiHandle;
+extern UART_HandleTypeDef UartHandle;
+extern TIM_HandleTypeDef    TimHandle;
+extern TIM_HandleTypeDef    TimHandle4;
 
 /* main.c functions */
 

@@ -79,17 +79,17 @@
   uint8_t Adafruit_GFX_getRotation(void);
 
  //protected:
-   int16_t
+extern   int16_t
     WIDTH, HEIGHT;   // This is the 'raw' display w/h - never changes
-  int16_t
+extern  int16_t
     _width, _height, // Display w/h as modified by current rotation
     cursor_x, cursor_y;
-  uint16_t
+extern  uint16_t
     textcolor, textbgcolor;
-  uint8_t
+extern  uint8_t
     textsize,
     rotation;
-  bool
+extern bool
     wrap; // If set, 'wrap' text at right edge of display
 //};
 

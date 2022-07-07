@@ -96,6 +96,11 @@ unsigned int tone = 0;
 
 uint8_t displayUpdating = 0;
 
+TIM_HandleTypeDef    TimHandle;
+TIM_HandleTypeDef    TimHandle4;
+SPI_HandleTypeDef SpiHandle;
+UART_HandleTypeDef UartHandle;
+
 ///** System Clock Configuration
 //*/
 //void SystemClock_Config(void)

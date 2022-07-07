@@ -1,7 +1,7 @@
 #include <i2c.h>
 
 
-
+I2C_HandleTypeDef handleI2C;
 
 void HAL_I2C_MspInit(I2C_HandleTypeDef *hi2c)
 {

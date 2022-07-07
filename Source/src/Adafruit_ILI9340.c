@@ -66,6 +66,8 @@
 	uint16_t rxBuf[10];
 	uint16_t txBuf[2];
 
+	bool  hwSPI;
+
 // Constructor when using hardware SPI.  Faster, but must use SPI pins
 // specific to each board type (e.g. 11,13 for Uno, 51,52 for Mega, etc.)
 void Adafruit_ILI9340_Adafruit_ILI9340(uint8_t cs, uint8_t dc, uint8_t rst) /*: Adafruit_GFX(ILI9340_TFTWIDTH, ILI9340_TFTHEIGHT) */ {

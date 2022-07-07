@@ -61,6 +61,19 @@ POSSIBILITY OF SUCH DAMAGE.
 //  wrap      = true;
 //}
 
+   int16_t
+    WIDTH, HEIGHT;   // This is the 'raw' display w/h - never changes
+  int16_t
+    _width, _height, // Display w/h as modified by current rotation
+    cursor_x, cursor_y;
+  uint16_t
+    textcolor, textbgcolor;
+  uint8_t
+    textsize,
+    rotation;
+  bool
+    wrap;
+
 // Draw a circle outline
 void Adafruit_GFX_drawCircle(int16_t x0, int16_t y0, int16_t r, uint16_t color) {
   int16_t f = 1 - r;

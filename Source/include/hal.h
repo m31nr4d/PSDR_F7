@@ -61,7 +61,7 @@ typedef void
 //    // power macros
 //    #define hal_isPlugged(powerState)       (!((powerState) & hal_externalPower))
 
-__IO uint32_t timingDelay;
+extern __IO uint32_t timingDelay;
 
 #define MEDIATEK_MODULE
 #define hal_gpsUart USART1

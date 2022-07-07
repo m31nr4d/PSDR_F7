@@ -158,7 +158,7 @@
 
 
 
-  bool  hwSPI;
+  extern bool  hwSPI;
 #ifdef __AVR__
   volatile uint8_t *mosiport, *clkport, *dcport, *rsport, *csport;
   uint8_t  _cs, _dc, _rst, _mosi, _miso, _sclk,

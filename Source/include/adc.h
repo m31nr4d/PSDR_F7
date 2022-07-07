@@ -24,12 +24,19 @@
 #include "stm32f7xx_hal_rcc.h"
 #endif
 
-__IO uint16_t uhADCxConvertedValue1;
-__IO uint16_t uhADCxConvertedValue2;
-__IO uint16_t uhADCxConvertedValue3;
-uint8_t adcConfigured;
-uint16_t sampleIndex;
-volatile uint8_t sampleRun;
+extern __IO uint16_t uhADCxConvertedValue1;
+extern __IO uint16_t uhADCxConvertedValue2;
+extern __IO uint16_t uhADCxConvertedValue3;
+extern uint8_t adcConfigured;
+extern uint16_t sampleIndex;
+extern volatile uint8_t sampleRun;
+extern ADC_HandleTypeDef    AdcHandle1;
+extern ADC_HandleTypeDef    AdcHandle2;
+extern ADC_HandleTypeDef    AdcHandle3;
+extern ADC_ChannelConfTypeDef sConfig1;
+extern ADC_ChannelConfTypeDef sConfig2;
+extern ADC_ChannelConfTypeDef sConfig3;
+extern uint8_t wrongThings;
 
 	/* Definition for ADCx clock resources */
 	#define ADC_RX_Q            ADC3
@@ -58,15 +65,6 @@ volatile uint8_t sampleRun;
 
 	/* Definition for ADCx's NVIC */
 	#define ADCx_IRQn                      ADC_IRQn
-
-
-	ADC_HandleTypeDef    AdcHandle1;
-	ADC_HandleTypeDef    AdcHandle2;
-	ADC_HandleTypeDef    AdcHandle3;
-	ADC_ChannelConfTypeDef sConfig1;
-	ADC_ChannelConfTypeDef sConfig2;
-	ADC_ChannelConfTypeDef sConfig3;
-	uint8_t wrongThings;
 
 
 	void initAdc(void);
