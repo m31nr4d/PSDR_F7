@@ -1,57 +1,12 @@
-//
-// This file is part of the GNU ARM Eclipse distribution.
-// Copyright (c) 2014 Liviu Ionescu.
-//
-
-// ----------------------------------------------------------------------------
-
-//#define ARM_MATH_CM4
 
 #include "main.h"
 
-// ----------------------------------------------------------------------------
-//
-// Standalone STM32F4 led blink sample (trace via NONE).
-//
-// In debug configurations, demonstrate how to print a greeting message
-// on the trace device. In release configurations the message is
-// simply discarded.
-//
-// Then demonstrates how to blink a led with 1Hz, using a
-// continuous loop and SysTick delays.
-//
-// Trace support is enabled by adding the TRACE macro definition.
-// By default the trace messages are forwarded to the NONE output,
-// but can be rerouted to any device or completely suppressed, by
-// changing the definitions required in system/src/diag/trace_impl.c
-// (currently OS_USE_TRACE_ITM, OS_USE_TRACE_SEMIHOSTING_DEBUG/_STDOUT).
-//
+//################## Vars & Defs ##################
 
-// ----- Timing definitions -------------------------------------------------
-
-// Keep the LED on for 2/3 of a second.
-#define BLINK_ON_TICKS  (TIMER_FREQUENCY_HZ * 2 / 3)
-#define BLINK_OFF_TICKS (TIMER_FREQUENCY_HZ - BLINK_ON_TICKS)
-
-// ----- main() ---------------------------------------------------------------
-
-// Sample pragmas to cope with warnings. Please note the related line at
-// the end of this function, used to pop the compiler diagnostics status.
-#pragma GCC diagnostic push
-//#pragma GCC diagnostic ignored "-Wunused-parameter"
-//#pragma GCC diagnostic ignored "-Wmissing-declarations"
-//#pragma GCC diagnostic ignored "-Wreturn-type"
-#pragma GCC diagnostic ignored "-Wfloat-conversion"
-
-static void CPU_CACHE_Enable(void);
-void dac1SetValue(uint16_t value);
-void dac2SetValue(uint16_t value);
-//void ddsPrefix(void);
-//void sendToDds(uint16_t data1, uint16_t data2);
-#define FFT_SIZE 256 //supported sizes are 16, 64, 256, 1024
-#define FFT_BUFFER_SIZE  512 //double the FFT_SIZE above.
 __IO long long millis = 0;
 
+#define FFT_SIZE 256 //supported sizes are 16, 64, 256, 1024
+#define FFT_BUFFER_SIZE  512 //double the FFT_SIZE above.
 
 float afGain = 1.0;
 float afGainLast = 2.0;
@@ -70,7 +25,7 @@ uint16_t menuLastPos = 1;
 uint16_t menuCount = 12;
 uint32_t frequencyDialMultiplier = 1;
 
-long vfoAFrequency = 7030000;
+long vfoAFrequency = 7074000;
 long vfoALastFreq = 0;
 int encoderPos, encoderLastPos;
 
@@ -101,55 +56,419 @@ TIM_HandleTypeDef    TimHandle4;
 SPI_HandleTypeDef SpiHandle;
 UART_HandleTypeDef UartHandle;
 
-///** System Clock Configuration
-//*/
-//void SystemClock_Config(void)
-//{
+/* Definition for DACx clock resources */
+#define DACx                            DAC
+#define DACx_CLK_ENABLE()               __DAC_CLK_ENABLE()
+#define DACx_CHANNEL_GPIO_CLK_ENABLE()  __GPIOA_CLK_ENABLE()
+
+#define DACx_FORCE_RESET()              __DAC_FORCE_RESET()
+#define DACx_RELEASE_RESET()            __DAC_RELEASE_RESET()
+
+/* Definition for ADCx Channel Pin */
+#define DACx_CHANNEL_PIN                GPIO_PIN_4
+#define DACx_CHANNEL_GPIO_PORT          GPIOA
+
+/* Definition for ADCx's Channel */
+#define DACx_CHANNEL                    DAC_CHANNEL_1
+
+DAC_HandleTypeDef    DacHandle;
+static DAC_ChannelConfTypeDef dacSConfig;
+
+
+int clickMultiply;
+int Max;
+int Min;
+int Pos;
+int Position;
+int Position2;
+int isFwd;
+
+#define EncoderPinA 20	// Rotary Encoder Left Pin //
+#define EncoderPinB 19	// Rotary Encoder Right Pin //
+#define EncoderPinP 21	// Rotary Encoder Click //
+
+float samplesA[FFT_BUFFER_SIZE];
+float samplesB[FFT_BUFFER_SIZE];
+float samplesC[FFT_BUFFER_SIZE];
+float samplesDisplay[FFT_BUFFER_SIZE];
+float samplesDemod[FFT_BUFFER_SIZE];
+float samplesOverlap[200]; //filterkernellength*2
+int     sampleBankAReady = 0;
+int 	sampleBankBReady = 0;
+int		sampleBankCReady = 0;
+
+uint8_t waterfallBusy = 0;
+
+//float   outputSamplesA[512];
+//float   outputSamplesB[512];
+int     sampleBank = 0;
+//int 	sampleCounter = 0;
+//const int FFT_SIZE = 256;
+float observerA, observerB, observerC;
+int 	dcOffset1 = 1029;
+int     dcOffset2 = 1535;
+int     dcOffset3 = 1518;
+
+int dac1OutVal = 0;
+int dac2OutVal = 0;
+int txDacOutValMax = 0;
+
+enum signalPaths
+{
+  recieve_no_filter = 0,
+  recieve_with_filter = 1,
+  transmit_no_amp_no_filter = 2,
+  transmit_with_amp_no_filter = 3,
+  tramsmit_with_amp_with_filter = 4,
+  vna_reflected = 5,
+  vna_through = 6
+};
+
+float passBandRms = 0;
+int lastSMeterBarWidth = 0;
+
+
+#define freqVOffset 108     //120 - (8*3/2)
+#define freqHOffset 142
+
+
+//TODO: Should I make a menuItem struct? Would that be helpful? The menus are a pain right now...
+uint8_t redItems[30];
+
+enum modes
+{
+	LSB = 0,
+	USB = 1,
+	AM = 2
+};
+
+enum menuItems
+{
+  volumeMenuItem = 0,
+  modeMenuItem,
+  megahertzMenuItem,
+  hundredKilohertzMenuItem,
+  tenKilohertzMenuItem,
+  kilohertzMenuItem,
+  hundredHertzMenuItem,
+  tenHertzMenuItem,
+  hertzMenuItem,
+  filterLowMenuItem,
+  filterHighMenuItem,
+  offMenuItem
+};
+
+
+int newWaterFallData = 0;
+
+TIM_TypeDef timTimBase;
+//TIM_HandleTypeDef timHandle;
+/* Definition for TIMx's NVIC */
+#define TIMx_IRQn                      TIM3_IRQn //TIM3_IRQn
+#define TIMx_IRQHandler                TIM3_IRQHandler
+
+//TIM_TimeBaseInitTypeDef timeBaseStructure;
+//TIM_OC_InitTypeDef   tsConfig;
+//#define  PULSE1_VALUE       40961       /* Capture Compare 1 Value  */
+uint32_t uwPrescalerValue = 0;
+
+
+
+void setupPeripheralPower()
+{
+	__GPIOA_CLK_ENABLE();
+	__GPIOB_CLK_ENABLE();
+	__GPIOC_CLK_ENABLE();
+	__GPIOD_CLK_ENABLE();
+	__GPIOE_CLK_ENABLE();
+	__DMA1_CLK_ENABLE();
+	__DMA2_CLK_ENABLE();
+	__I2C2_CLK_ENABLE();
+}
+
+void teardownPeripheralPower()
+{
+	__GPIOA_CLK_DISABLE();
+	__GPIOB_CLK_DISABLE();
+	__GPIOC_CLK_DISABLE();
+	__GPIOD_CLK_DISABLE();
+	__GPIOE_CLK_DISABLE();
+	__DMA1_CLK_DISABLE();
+	__DMA2_CLK_DISABLE();
+	__I2C2_CLK_DISABLE();
+}
+
+
+void doNothing()
+{
+	static int cap = 0;
+	cap++;
+}
+
+void SysTick_Handler (void)
+{
+	millis++;
+  timer_tick ();
+  Tick();
+  HAL_IncTick();
+  if(timingDelay > 0) timingDelay--;
+}
+
+void Encoder(void)
+{
+	Position = 0;
+	Position2 = 0;
+	Max = 127;
+	Min = 0;
+	clickMultiply = 100;
+}
+
+void Tick(void)
+{
+	if(!displayUpdating)
+	{
+		Position2 = (HAL_GPIO_ReadPin(encoderB.port, encoderB.pin) * 2) + HAL_GPIO_ReadPin(encoderBee.port, encoderBee.pin);;
+		if (Position2 != Position)
+		{
+			isFwd = ((Position == 0) && (Position2 == 1)) || ((Position == 1) && (Position2 == 3)) ||
+				((Position == 3) && (Position2 == 2)) || ((Position == 2) && (Position2 == 0));
+			if (!HAL_GPIO_ReadPin(encoderP.port, encoderP.pin))
+			{
+				if (isFwd)
+					menuEncoderTicks += 1;
+				else
+					menuEncoderTicks -= 1;
+					menuPos = menuEncoderTicks/2;
+					menuPos = menuPos % menuCount;
+			}
+			else
+			{
+				if (isFwd) Pos++;
+				else Pos--;
+			}
+				//if (Pos < Min) Pos = Min;
+				//if (Pos > Max) Pos = Max;
+		}
+	Position = Position2;
+	}
+}
+
+int getPos(void)
+{
+	return (Pos/2);
+}
+
+void setMinMax(int _Min, int _Max)
+{
+	Min = _Min*4;
+	Max = _Max*4;
+	if (Pos < Min) Pos = Min;
+	if (Pos > Max) Pos = Max;
+}
+
+void captureSamples()
+{
+	if(adcConfigured)
+	{
+		//if(!sampleRun)
+		//{
+		adcGetConversion();
+		switch (sampleBank)
+		{
+		case 0:
+			if(transmitting == 0)
+			{
+				samplesA[sampleIndex*2] = ((uhADCxConvertedValue3 - dcOffset3)/4096.0); // - 2048;
+				samplesA[sampleIndex*2 + 1] = ((uhADCxConvertedValue2 - dcOffset2)/4096.0); // - 2048;//0.0;
+			} else {
+				samplesA[sampleIndex*2] = ((uhADCxConvertedValue1 - dcOffset1)/4096.0); // - 2048;
+				samplesA[sampleIndex*2 + 1] = ((uhADCxConvertedValue1 - dcOffset1)/4096.0); // - 2048;//0.0;
+			}
+
+			if(uhADCxConvertedValue1 > maxAmplitude) maxAmplitude = uhADCxConvertedValue1;
+			if(uhADCxConvertedValue2 > maxAmplitude) maxAmplitude = uhADCxConvertedValue2;
+			if(samplesB[sampleIndex*2] > agcLevel) agcLevel = samplesB[sampleIndex*2];
+			if(samplesB[sampleIndex*2+1] > agcLevel) agcLevel = samplesB[sampleIndex*2+1];
+//					if(sampleIndex < filterKernelLength)
+//					{
+//						dac1SetValue(samplesB[sampleIndex*2] + samplesA[(FFT_SIZE - filterKernelLength)
+//								+ sampleIndex * 2] /*/ (agcLevel * agcScale)*/ * 4096 * gain + 2048);
+//						dac2SetValue(samplesB[sampleIndex*2+1] + samplesA[(FFT_SIZE - filterKernelLength)
+//						        + sampleIndex * 2] /*/ (agcLevel * agcScale)*/ * 4096 * gain + 2048);
+//					} else {
+
+			dac1OutVal = samplesB[(sampleIndex)*2] /*/ (agcLevel * agcScale)*/ * 4096 * afGain + 2048;
+			dac2OutVal = samplesB[(sampleIndex)*2+1] /*/ (agcLevel * agcScale)*/ * 4096 * afGain + 2048;
+
+			if(transmitting == 1)
+			{
+				if(dac1OutVal > txDacOutValMax) txDacOutValMax = dac1OutVal;
+				if(dac2OutVal > txDacOutValMax) txDacOutValMax = dac2OutVal;
+			}
+
+			dac1SetValue(dac1OutVal);
+			dac2SetValue(dac2OutVal);
+//					}
+
+
+
+			if(sampleIndex >= FFT_SIZE - filterKernelLength - 1)
+			{
+				samplesOverlap[(sampleIndex - (FFT_SIZE - filterKernelLength))*2] = samplesA[sampleIndex*2];
+				samplesOverlap[(sampleIndex - (FFT_SIZE - filterKernelLength)) * 2 +1] = samplesA[sampleIndex*2+1];
+			}
+			break;
+
+		case 1:
+			if(transmitting == 0)
+			{
+				samplesB[sampleIndex*2] = ((uhADCxConvertedValue3 - dcOffset3)/4096.0); // - 2048;
+				samplesB[sampleIndex*2 + 1] = ((uhADCxConvertedValue2 - dcOffset2)/4096.0); // - 2048;//0.0;
+			} else {
+				samplesB[sampleIndex*2] = ((uhADCxConvertedValue1 - dcOffset1)/4096.0); // - 2048;
+				samplesB[sampleIndex*2 + 1] = ((uhADCxConvertedValue1 - dcOffset1)/4096.0); // - 2048;//0.0;
+			}
+
+			if(uhADCxConvertedValue1 > maxAmplitude) maxAmplitude = uhADCxConvertedValue1;
+			if(uhADCxConvertedValue2 > maxAmplitude) maxAmplitude = uhADCxConvertedValue2;
+
+			if(samplesC[sampleIndex*2] > agcLevel) agcLevel =samplesC[sampleIndex*2];
+			if(samplesC[sampleIndex*2+1] > agcLevel) agcLevel = samplesC[sampleIndex*2+1];
+//					if(sampleIndex < filterKernelLength)
+//					{
+//						dac1SetValue(samplesC[sampleIndex*2] + samplesB[(FFT_SIZE - filterKernelLength)
+//								+ sampleIndex * 2] /*/ (agcLevel * agcScale)*/ * 4096 * gain + 2048);
+//						dac2SetValue(samplesC[sampleIndex*2+1] + samplesB[(FFT_SIZE - filterKernelLength)
+//						        + sampleIndex * 2] /*/ (agcLevel * agcScale)*/ * 4096 * gain + 2048);
+//					} else {
+						//dac1SetValue(samplesC[(sampleIndex)*2] /*/ (agcLevel * agcScale)*/ * 4096 * afGain + 2048);
+						//dac2SetValue(samplesC[(sampleIndex)*2+1] /*/ (agcLevel * agcScale)*/ * 4096 * afGain + 2048);
+
+			dac1OutVal = samplesC[(sampleIndex)*2] /*/ (agcLevel * agcScale)*/ * 4096 * afGain + 2048;
+			dac2OutVal = samplesC[(sampleIndex)*2+1] /*/ (agcLevel * agcScale)*/ * 4096 * afGain + 2048;
+
+			if(transmitting == 1)
+			{
+				if(dac1OutVal > txDacOutValMax) txDacOutValMax = dac1OutVal;
+				if(dac2OutVal > txDacOutValMax) txDacOutValMax = dac2OutVal;
+			}
+
+			dac1SetValue(dac1OutVal);
+			dac2SetValue(dac2OutVal);
+
+//					}
+
+			if(sampleIndex >= FFT_SIZE - filterKernelLength - 1)
+			{
+				samplesOverlap[(sampleIndex - (FFT_SIZE - filterKernelLength))*2] = samplesB[sampleIndex*2];
+				samplesOverlap[(sampleIndex - (FFT_SIZE - filterKernelLength)) * 2 +1] = samplesB[sampleIndex*2+1];
+			}
+			break;
+
+		case 2:
+			if(transmitting == 0)
+			{
+				samplesC[sampleIndex*2] = ((uhADCxConvertedValue3 - dcOffset3)/4096.0); // - 2048;
+				samplesC[sampleIndex*2 + 1] = ((uhADCxConvertedValue2 - dcOffset2)/4096.0); // - 2048;//0.0;
+			} else {
+				samplesC[sampleIndex*2] = ((uhADCxConvertedValue1 - dcOffset1)/4096.0); // - 2048;
+				samplesC[sampleIndex*2 + 1] = ((uhADCxConvertedValue1 - dcOffset1)/4096.0); // - 2048;//0.0;
+			}
+
+			if(uhADCxConvertedValue1 > maxAmplitude) maxAmplitude = uhADCxConvertedValue1;
+			if(uhADCxConvertedValue2 > maxAmplitude) maxAmplitude = uhADCxConvertedValue2;
+
+			if(samplesA[sampleIndex*2] > agcLevel) agcLevel = samplesA[sampleIndex*2];
+			if(samplesA[sampleIndex*2+1] > agcLevel) agcLevel = samplesA[sampleIndex*2+1];
+//					if(sampleIndex < filterKernelLength)
+//					{
+//						dac1SetValue(samplesA[sampleIndex*2] + samplesC[(FFT_SIZE - filterKernelLength)
+//								+ sampleIndex * 2] /*/ (agcLevel * agcScale)*/ * 4096 * gain + 2048);
+//						dac2SetValue(samplesA[sampleIndex*2+1] + samplesC[(FFT_SIZE - filterKernelLength)
+//						        + sampleIndex * 2] /*/ (agcLevel * agcScale)*/ * 4096 * gain + 2048);
+//					} else {
+						//dac1SetValue(samplesA[(sampleIndex)*2] /*/ (agcLevel * agcScale)*/ * 4096 * afGain + 2048);
+						//dac2SetValue(samplesA[(sampleIndex)*2+1] /*/ (agcLevel * agcScale)*/ * 4096 * afGain + 2048);
+
+			dac1OutVal = samplesA[(sampleIndex)*2] /*/ (agcLevel * agcScale)*/ * 4096 * afGain + 2048;
+			dac2OutVal = samplesA[(sampleIndex)*2+1] /*/ (agcLevel * agcScale)*/ * 4096 * afGain + 2048;
+
+			if(transmitting == 1)
+			{
+				if(dac1OutVal > txDacOutValMax) txDacOutValMax = dac1OutVal;
+				if(dac2OutVal > txDacOutValMax) txDacOutValMax = dac2OutVal;
+			}
+
+			dac1SetValue(dac1OutVal);
+			dac2SetValue(dac2OutVal);
+
+
+//					}
+
+			if(sampleIndex >= FFT_SIZE - filterKernelLength - 1)
+			{
+				samplesOverlap[(sampleIndex - (FFT_SIZE - filterKernelLength))*2] = samplesC[sampleIndex*2];
+				samplesOverlap[(sampleIndex - (FFT_SIZE - filterKernelLength)) * 2 +1] = samplesC[sampleIndex*2+1];
+			}
+
+			break;
+		}
+		//dac1SetValue(outputSamplesA[sampleIndex*2]);
+
+		agcLevel = agcLevel * (1 - 0.0001);
+
+		sampleIndex++;
+		if(sampleIndex >= FFT_SIZE) //- (filterKernelLength/2))
+		{
+			sampleRun = 1;
+			sampleIndex = filterKernelLength; ///2; //0;
+			switch(sampleBank)
+			{
+			case 0:
+				sampleBankAReady = 1;
+				sampleBank = 1;
+				zeroSampleBank(samplesB);
+				break;
+			case 1:
+				sampleBankBReady = 1;
+				sampleBank = 2;
+				zeroSampleBank(samplesC);
+				break;
+			case 2:
+				sampleBankCReady = 1;
+				sampleBank = 0;
+				zeroSampleBank(samplesA);
+			break;
+			}
+
+
+
+			//sampleBank = sampleBank++ % 3;
+
+//					if(sampleBank == 0)
+//					{
+//						sampleBankAReady = 1;
+//						sampleBank = 1;
 //
-//  RCC_ClkInitTypeDef RCC_ClkInitStruct;
-//  RCC_OscInitTypeDef RCC_OscInitStruct;
-//
-//  __PWR_CLK_ENABLE();
-//
-//  __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1); //needed?
-//
-//  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
-//  RCC_OscInitStruct.HSEState = RCC_HSE_ON;
-//  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
-//  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
-//  RCC_OscInitStruct.PLL.PLLM = 26;
-//  RCC_OscInitStruct.PLL.PLLN = 432;
-//  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
-//  RCC_OscInitStruct.PLL.PLLQ = 9;
-//  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
-//
-//  HAL_StatusTypeDef ret = HAL_RCC_OscConfig(&RCC_OscInitStruct);
-//  if(ret != HAL_OK)
-//    {
-//      while(1) { ; }
-//    }
-//
-//  /* Activate the OverDrive to reach the 216 MHz Frequency */
-//    ret = HAL_PWREx_EnableOverDrive();
-//    if(ret != HAL_OK)
-//    {
-//      while(1) { ; }
-//    }
-//
-//  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_SYSCLK|RCC_CLOCKTYPE_HCLK |RCC_CLOCKTYPE_PCLK1
-//                              |RCC_CLOCKTYPE_PCLK2;
-//  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
-//  RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
-//  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV4;
-//  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV2;
-//
-//  ret = HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_7);
-//  if(ret != HAL_OK)
-//    {
-//      while(1) { ; }
-//    }
-//
-//}
+//					} else {
+//						sampleBankBReady = 1;
+//						sampleBank = 0;
+//					}
+		}
+
+		adcStartConversion();
+
+	}
+}
+
+void zeroSampleBank(float *samples)
+{
+	uint16_t i;
+	for(i = 0; i < filterKernelLength * 2; i++)
+		samples[i] = samplesOverlap[i];
+	for(; i < FFT_BUFFER_SIZE; i++)
+		samples[i] = 0;
+}
 
 void polarToRect(float m, float a, float32_t* x, float32_t* y)
 {
@@ -283,541 +602,7 @@ void applyCoeficient(float *samples, int shift)
 	}
 }
 
-
-void setupPeripheralPower()
-{
-	__GPIOA_CLK_ENABLE();
-	__GPIOB_CLK_ENABLE();
-	__GPIOC_CLK_ENABLE();
-	__GPIOD_CLK_ENABLE();
-	__GPIOE_CLK_ENABLE();
-	__DMA1_CLK_ENABLE();
-	__DMA2_CLK_ENABLE();
-	__I2C2_CLK_ENABLE();
-}
-
-void teardownPeripheralPower()
-{
-	__GPIOA_CLK_DISABLE();
-	__GPIOB_CLK_DISABLE();
-	__GPIOC_CLK_DISABLE();
-	__GPIOD_CLK_DISABLE();
-	__GPIOE_CLK_DISABLE();
-	__DMA1_CLK_DISABLE();
-	__DMA2_CLK_DISABLE();
-	__I2C2_CLK_DISABLE();
-}
-
-
-void configDMA(SPI_HandleTypeDef *hspi)
-{
-//	  static DMA_HandleTypeDef hdma_tx;
-//	  static DMA_HandleTypeDef hdma_rx;
-//
-//
-//	hdma_tx.Instance                 = SPIx_TX_DMA_STREAM;
-//
-//	  hdma_tx.Init.Channel             = SPIx_TX_DMA_CHANNEL;
-//	  hdma_tx.Init.Direction           = DMA_MEMORY_TO_PERIPH;
-//	  hdma_tx.Init.PeriphInc           = DMA_PINC_DISABLE;
-//	  hdma_tx.Init.MemInc              = DMA_MINC_ENABLE;
-//	  hdma_tx.Init.PeriphDataAlignment = DMA_PDATAALIGN_BYTE;
-//	  hdma_tx.Init.MemDataAlignment    = DMA_MDATAALIGN_BYTE;
-//	  hdma_tx.Init.Mode                = DMA_NORMAL;
-//	  hdma_tx.Init.Priority            = DMA_PRIORITY_LOW;
-//	  hdma_tx.Init.FIFOMode            = DMA_FIFOMODE_DISABLE;
-//	  hdma_tx.Init.FIFOThreshold       = DMA_FIFO_THRESHOLD_FULL;
-//	  hdma_tx.Init.MemBurst            = DMA_MBURST_INC4;
-//	  hdma_tx.Init.PeriphBurst         = DMA_PBURST_INC4;
-//
-//	  HAL_DMA_Init(&hdma_tx);
-//
-//	  /* Associate the initialized DMA handle to the the SPI handle */
-//	  __HAL_LINKDMA(hspi, hdmatx, hdma_tx);
-//
-//	  /* Configure the DMA handler for Transmission process */
-//	  hdma_rx.Instance                 = SPIx_RX_DMA_STREAM;
-//
-//	  hdma_rx.Init.Channel             = SPIx_RX_DMA_CHANNEL;
-//	  hdma_rx.Init.Direction           = DMA_PERIPH_TO_MEMORY;
-//	  hdma_rx.Init.PeriphInc           = DMA_PINC_DISABLE;
-//	  hdma_rx.Init.MemInc              = DMA_MINC_ENABLE;
-//	  hdma_rx.Init.PeriphDataAlignment = DMA_PDATAALIGN_BYTE;
-//	  hdma_rx.Init.MemDataAlignment    = DMA_MDATAALIGN_BYTE;
-//	  hdma_rx.Init.Mode                = DMA_NORMAL;
-//	  hdma_rx.Init.Priority            = DMA_PRIORITY_HIGH;
-//	  hdma_rx.Init.FIFOMode            = DMA_FIFOMODE_DISABLE;
-//	  hdma_rx.Init.FIFOThreshold       = DMA_FIFO_THRESHOLD_FULL;
-//	  hdma_rx.Init.MemBurst            = DMA_MBURST_INC4;
-//	  hdma_rx.Init.PeriphBurst         = DMA_PBURST_INC4;
-//
-//	  HAL_DMA_Init(&hdma_rx);
-//
-//	  /* Associate the initialized DMA handle to the the SPI handle */
-//	  __HAL_LINKDMA(hspi, hdmarx, hdma_rx);
-//
-//	  /*##-4- Configure the NVIC for DMA #########################################*/
-//	  /* NVIC configuration for DMA transfer complete interrupt (SPI3_TX) */
-//	  HAL_NVIC_SetPriority(15/*SPIx_DMA_TX_IRQn*/, 0, 1);
-//	  HAL_NVIC_EnableIRQ(SPIx_DMA_TX_IRQn);
-//
-//	  /* NVIC configuration for DMA transfer complete interrupt (SPI3_RX) */
-//	  HAL_NVIC_SetPriority(SPIx_DMA_RX_IRQn, 0, 0);
-//	  HAL_NVIC_EnableIRQ(SPIx_DMA_RX_IRQn);
-//
-//
-//	  //HAL_DMA_Start();
-}
-
-
-
-void doNothing()
-{
-	static int cap = 0;
-	cap++;
-}
-
-void
-SysTick_Handler (void)
-{
-	millis++;
-  timer_tick ();
-  Tick();
-  HAL_IncTick();
-  if(timingDelay > 0) timingDelay--;
-}
-
-int clickMultiply;
-int Max;
-int Min;
-int Pos;
-int Position;
-int Position2;
-int isFwd;
-
-#define EncoderPinA 20	// Rotary Encoder Left Pin //
-#define EncoderPinB 19	// Rotary Encoder Right Pin //
-#define EncoderPinP 21	// Rotary Encoder Click //
-
-
-void Encoder(void)
-{
-	Position = 0;
-	Position2 = 0;
-	Max = 127;
-	Min = 0;
-	clickMultiply = 100;
-}
-
-	void Tick(void)
-	{
-		if(!displayUpdating)
-		{
-			Position2 = (HAL_GPIO_ReadPin(encoderB.port, encoderB.pin) * 2) + HAL_GPIO_ReadPin(encoderBee.port, encoderBee.pin);;
-			if (Position2 != Position)
-			{
-				isFwd = ((Position == 0) && (Position2 == 1)) || ((Position == 1) && (Position2 == 3)) ||
-					((Position == 3) && (Position2 == 2)) || ((Position == 2) && (Position2 == 0));
-				if (!HAL_GPIO_ReadPin(encoderP.port, encoderP.pin))
-				{
-					if (isFwd)
-						menuEncoderTicks += 1;
-					else
-						menuEncoderTicks -= 1;
-					menuPos = menuEncoderTicks/2;
-					menuPos = menuPos % menuCount;
-				}
-				else
-				{
-					if (isFwd) Pos++;
-					else Pos--;
-				}
-				//if (Pos < Min) Pos = Min;
-				//if (Pos > Max) Pos = Max;
-			}
-			Position = Position2;
-		}
-	}
-
-	int getPos(void)
-	{
-		return (Pos/2);
-	}
-
-//	uint16_t getMenuPos(void)
-//	{
-//		return (menuPos/2);
-//	}
-
-	void setMinMax(int _Min, int _Max)
-	{
-		Min = _Min*4;
-		Max = _Max*4;
-		if (Pos < Min) Pos = Min;
-		if (Pos > Max) Pos = Max;
-	}
-
-
-
-
-	float samplesA[FFT_BUFFER_SIZE];
-	float samplesB[FFT_BUFFER_SIZE];
-	float samplesC[FFT_BUFFER_SIZE];
-	float samplesDisplay[FFT_BUFFER_SIZE];
-	float samplesDemod[FFT_BUFFER_SIZE];
-	float samplesOverlap[200]; //filterkernellength*2
-	int     sampleBankAReady = 0;
-	int 	sampleBankBReady = 0;
-	int		sampleBankCReady = 0;
-
-	uint8_t waterfallBusy = 0;
-
-	//float   outputSamplesA[512];
-	//float   outputSamplesB[512];
-	int     sampleBank = 0;
-	//int 	sampleCounter = 0;
-	//const int FFT_SIZE = 256;
-	float observerA, observerB, observerC;
-	int 	dcOffset1 = 1029;
-	int     dcOffset2 = 1535;
-	int     dcOffset3 = 1518;
-
-	int dac1OutVal = 0;
-	int dac2OutVal = 0;
-	int txDacOutValMax = 0;
-
-	void captureSamples()
-	{
-		if(adcConfigured)
-		{
-			//if(!sampleRun)
-			{
-				if(sampleIndex == 100)
-							blink_led_on();
-				adcGetConversion();
-				switch (sampleBank)
-				{
-				case 0:
-					if(transmitting == 0)
-					{
-						samplesA[sampleIndex*2] = ((uhADCxConvertedValue3 - dcOffset3)/4096.0); // - 2048;
-						samplesA[sampleIndex*2 + 1] = ((uhADCxConvertedValue2 - dcOffset2)/4096.0); // - 2048;//0.0;
-					} else {
-						samplesA[sampleIndex*2] = ((uhADCxConvertedValue1 - dcOffset1)/4096.0); // - 2048;
-						samplesA[sampleIndex*2 + 1] = ((uhADCxConvertedValue1 - dcOffset1)/4096.0); // - 2048;//0.0;
-					}
-
-					if(uhADCxConvertedValue1 > maxAmplitude) maxAmplitude = uhADCxConvertedValue1;
-					if(uhADCxConvertedValue2 > maxAmplitude) maxAmplitude = uhADCxConvertedValue2;
-
-					if(samplesB[sampleIndex*2] > agcLevel) agcLevel = samplesB[sampleIndex*2];
-					if(samplesB[sampleIndex*2+1] > agcLevel) agcLevel = samplesB[sampleIndex*2+1];
-//					if(sampleIndex < filterKernelLength)
-//					{
-//						dac1SetValue(samplesB[sampleIndex*2] + samplesA[(FFT_SIZE - filterKernelLength)
-//								+ sampleIndex * 2] /*/ (agcLevel * agcScale)*/ * 4096 * gain + 2048);
-//						dac2SetValue(samplesB[sampleIndex*2+1] + samplesA[(FFT_SIZE - filterKernelLength)
-//						        + sampleIndex * 2] /*/ (agcLevel * agcScale)*/ * 4096 * gain + 2048);
-//					} else {
-
-					dac1OutVal = samplesB[(sampleIndex)*2] /*/ (agcLevel * agcScale)*/ * 4096 * afGain + 2048;
-					dac2OutVal = samplesB[(sampleIndex)*2+1] /*/ (agcLevel * agcScale)*/ * 4096 * afGain + 2048;
-
-					if(transmitting == 1)
-					{
-						if(dac1OutVal > txDacOutValMax) txDacOutValMax = dac1OutVal;
-						if(dac2OutVal > txDacOutValMax) txDacOutValMax = dac2OutVal;
-					}
-
-						dac1SetValue(dac1OutVal);
-						dac2SetValue(dac2OutVal);
-//					}
-
-
-
-					if(sampleIndex >= FFT_SIZE - filterKernelLength - 1)
-					{
-						samplesOverlap[(sampleIndex - (FFT_SIZE - filterKernelLength))*2] = samplesA[sampleIndex*2];
-						samplesOverlap[(sampleIndex - (FFT_SIZE - filterKernelLength)) * 2 +1] = samplesA[sampleIndex*2+1];
-					}
-
-
-					break;
-
-				case 1:
-					if(transmitting == 0)
-					{
-						samplesB[sampleIndex*2] = ((uhADCxConvertedValue3 - dcOffset3)/4096.0); // - 2048;
-						samplesB[sampleIndex*2 + 1] = ((uhADCxConvertedValue2 - dcOffset2)/4096.0); // - 2048;//0.0;
-					} else {
-						samplesB[sampleIndex*2] = ((uhADCxConvertedValue1 - dcOffset1)/4096.0); // - 2048;
-						samplesB[sampleIndex*2 + 1] = ((uhADCxConvertedValue1 - dcOffset1)/4096.0); // - 2048;//0.0;
-					}
-
-					if(uhADCxConvertedValue1 > maxAmplitude) maxAmplitude = uhADCxConvertedValue1;
-					if(uhADCxConvertedValue2 > maxAmplitude) maxAmplitude = uhADCxConvertedValue2;
-
-					if(samplesC[sampleIndex*2] > agcLevel) agcLevel =samplesC[sampleIndex*2];
-					if(samplesC[sampleIndex*2+1] > agcLevel) agcLevel = samplesC[sampleIndex*2+1];
-//					if(sampleIndex < filterKernelLength)
-//					{
-//						dac1SetValue(samplesC[sampleIndex*2] + samplesB[(FFT_SIZE - filterKernelLength)
-//								+ sampleIndex * 2] /*/ (agcLevel * agcScale)*/ * 4096 * gain + 2048);
-//						dac2SetValue(samplesC[sampleIndex*2+1] + samplesB[(FFT_SIZE - filterKernelLength)
-//						        + sampleIndex * 2] /*/ (agcLevel * agcScale)*/ * 4096 * gain + 2048);
-//					} else {
-						//dac1SetValue(samplesC[(sampleIndex)*2] /*/ (agcLevel * agcScale)*/ * 4096 * afGain + 2048);
-						//dac2SetValue(samplesC[(sampleIndex)*2+1] /*/ (agcLevel * agcScale)*/ * 4096 * afGain + 2048);
-
-						dac1OutVal = samplesC[(sampleIndex)*2] /*/ (agcLevel * agcScale)*/ * 4096 * afGain + 2048;
-						dac2OutVal = samplesC[(sampleIndex)*2+1] /*/ (agcLevel * agcScale)*/ * 4096 * afGain + 2048;
-
-						if(transmitting == 1)
-						{
-							if(dac1OutVal > txDacOutValMax) txDacOutValMax = dac1OutVal;
-							if(dac2OutVal > txDacOutValMax) txDacOutValMax = dac2OutVal;
-						}
-
-							dac1SetValue(dac1OutVal);
-							dac2SetValue(dac2OutVal);
-
-//					}
-
-						if(sampleIndex >= FFT_SIZE - filterKernelLength - 1)
-						{
-							samplesOverlap[(sampleIndex - (FFT_SIZE - filterKernelLength))*2] = samplesB[sampleIndex*2];
-							samplesOverlap[(sampleIndex - (FFT_SIZE - filterKernelLength)) * 2 +1] = samplesB[sampleIndex*2+1];
-						}
-
-					break;
-
-				case 2:
-					if(transmitting == 0)
-					{
-						samplesC[sampleIndex*2] = ((uhADCxConvertedValue3 - dcOffset3)/4096.0); // - 2048;
-						samplesC[sampleIndex*2 + 1] = ((uhADCxConvertedValue2 - dcOffset2)/4096.0); // - 2048;//0.0;
-					} else {
-						samplesC[sampleIndex*2] = ((uhADCxConvertedValue1 - dcOffset1)/4096.0); // - 2048;
-						samplesC[sampleIndex*2 + 1] = ((uhADCxConvertedValue1 - dcOffset1)/4096.0); // - 2048;//0.0;
-					}
-
-					if(uhADCxConvertedValue1 > maxAmplitude) maxAmplitude = uhADCxConvertedValue1;
-					if(uhADCxConvertedValue2 > maxAmplitude) maxAmplitude = uhADCxConvertedValue2;
-
-					if(samplesA[sampleIndex*2] > agcLevel) agcLevel = samplesA[sampleIndex*2];
-					if(samplesA[sampleIndex*2+1] > agcLevel) agcLevel = samplesA[sampleIndex*2+1];
-//					if(sampleIndex < filterKernelLength)
-//					{
-//						dac1SetValue(samplesA[sampleIndex*2] + samplesC[(FFT_SIZE - filterKernelLength)
-//								+ sampleIndex * 2] /*/ (agcLevel * agcScale)*/ * 4096 * gain + 2048);
-//						dac2SetValue(samplesA[sampleIndex*2+1] + samplesC[(FFT_SIZE - filterKernelLength)
-//						        + sampleIndex * 2] /*/ (agcLevel * agcScale)*/ * 4096 * gain + 2048);
-//					} else {
-						//dac1SetValue(samplesA[(sampleIndex)*2] /*/ (agcLevel * agcScale)*/ * 4096 * afGain + 2048);
-						//dac2SetValue(samplesA[(sampleIndex)*2+1] /*/ (agcLevel * agcScale)*/ * 4096 * afGain + 2048);
-
-						dac1OutVal = samplesA[(sampleIndex)*2] /*/ (agcLevel * agcScale)*/ * 4096 * afGain + 2048;
-						dac2OutVal = samplesA[(sampleIndex)*2+1] /*/ (agcLevel * agcScale)*/ * 4096 * afGain + 2048;
-
-						if(transmitting == 1)
-						{
-							if(dac1OutVal > txDacOutValMax) txDacOutValMax = dac1OutVal;
-							if(dac2OutVal > txDacOutValMax) txDacOutValMax = dac2OutVal;
-						}
-
-							dac1SetValue(dac1OutVal);
-							dac2SetValue(dac2OutVal);
-
-
-//					}
-
-						if(sampleIndex >= FFT_SIZE - filterKernelLength - 1)
-						{
-							samplesOverlap[(sampleIndex - (FFT_SIZE - filterKernelLength))*2] = samplesC[sampleIndex*2];
-							samplesOverlap[(sampleIndex - (FFT_SIZE - filterKernelLength)) * 2 +1] = samplesC[sampleIndex*2+1];
-						}
-
-					break;
-				}
-				//dac1SetValue(outputSamplesA[sampleIndex*2]);
-
-				agcLevel = agcLevel * (1 - 0.0001);
-
-				sampleIndex++;
-				if(sampleIndex >= FFT_SIZE) //- (filterKernelLength/2))
-				{
-					blink_led_off();
-					sampleRun = 1;
-					sampleIndex = filterKernelLength; ///2; //0;
-					switch(sampleBank)
-					{
-					case 0:
-						sampleBankAReady = 1;
-						sampleBank = 1;
-						zeroSampleBank(samplesB);
-						break;
-					case 1:
-						sampleBankBReady = 1;
-						sampleBank = 2;
-						zeroSampleBank(samplesC);
-						break;
-					case 2:
-						sampleBankCReady = 1;
-						sampleBank = 0;
-						zeroSampleBank(samplesA);
-						break;
-					}
-
-
-
-					//sampleBank = sampleBank++ % 3;
-
-//					if(sampleBank == 0)
-//					{
-//						sampleBankAReady = 1;
-//						sampleBank = 1;
-//
-//					} else {
-//						sampleBankBReady = 1;
-//						sampleBank = 0;
-//					}
-				}
-
-				adcStartConversion();
-			}
-		}
-	}
-
-void zeroSampleBank(float *samples)
-{
-	uint16_t i;
-	for(i = 0; i < filterKernelLength * 2; i++)
-		samples[i] = samplesOverlap[i];
-	for(; i < FFT_BUFFER_SIZE; i++)
-		samples[i] = 0;
-}
-
-
-//Seems to be working, higher numbers are higher gain. I'll need to work out the math on how much.
-void setGainPot(uint8_t a, uint8_t b)
-{
-	uint8_t i;
-	//pull NSS low
-	HAL_GPIO_WritePin(GAIN_POT_NSS.port, GAIN_POT_NSS.pin, 0);
-
-	//choose first register
-	HAL_GPIO_WritePin(FILTER_GAIN_POT_MOSI.port, FILTER_GAIN_POT_MOSI.pin, 0);
-	HAL_GPIO_WritePin(FILTER_GAIN_POT_SCLK.port, FILTER_GAIN_POT_SCLK.pin, 0);
-	HAL_GPIO_WritePin(FILTER_GAIN_POT_SCLK.port, FILTER_GAIN_POT_SCLK.pin, 1);
-
-
-	for(i = 0; i < 8; i++)
-	{
-		HAL_GPIO_WritePin(FILTER_GAIN_POT_MOSI.port, FILTER_GAIN_POT_MOSI.pin, (a >> (7-i)) & 1);
-		HAL_GPIO_WritePin(FILTER_GAIN_POT_SCLK.port, FILTER_GAIN_POT_SCLK.pin, 0);
-		HAL_GPIO_WritePin(FILTER_GAIN_POT_SCLK.port, FILTER_GAIN_POT_SCLK.pin, 1);
-	}
-
-	HAL_GPIO_WritePin(GAIN_POT_NSS.port, GAIN_POT_NSS.pin, 1);
-
-	HAL_GPIO_WritePin(GAIN_POT_NSS.port, GAIN_POT_NSS.pin, 0);
-
-	//choose second register
-	HAL_GPIO_WritePin(FILTER_GAIN_POT_MOSI.port, FILTER_GAIN_POT_MOSI.pin, 1);
-	HAL_GPIO_WritePin(FILTER_GAIN_POT_SCLK.port, FILTER_GAIN_POT_SCLK.pin, 0);
-	HAL_GPIO_WritePin(FILTER_GAIN_POT_SCLK.port, FILTER_GAIN_POT_SCLK.pin, 1);
-
-
-	for(i = 0; i < 8; i++)
-	{
-		HAL_GPIO_WritePin(FILTER_GAIN_POT_MOSI.port, FILTER_GAIN_POT_MOSI.pin, (b >> (7-i)) & 1);
-		HAL_GPIO_WritePin(FILTER_GAIN_POT_SCLK.port, FILTER_GAIN_POT_SCLK.pin, 0);
-		HAL_GPIO_WritePin(FILTER_GAIN_POT_SCLK.port, FILTER_GAIN_POT_SCLK.pin, 1);
-	}
-
-	HAL_GPIO_WritePin(GAIN_POT_NSS.port, GAIN_POT_NSS.pin, 1);
-
-}
-
-//USART1_IRQHandler(void)
-//{
-//    //blink_led_on();
-//    USARTx_IRQHandler();
-//
-//}
-
-
-__IO ITStatus UartReady = RESET;
-uint8_t aTxBuffer[] = "Chris a baby!   ";
-uint8_t aRxBuffer[256];
-void configUartPeripheral()
-{
-//	//Enable Clocks
-//	__GPIOC_CLK_ENABLE();
-//	__USART6_CLK_ENABLE();
-//
-
-//	GPIO_InitTypeDef GPIO_InitStruct;
-//
-////	//Setup TX Pin
-//	GPIO_InitStruct.Pin = RX_TO_GPS.pin;
-//	GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-//	GPIO_InitStruct.Pull = GPIO_NOPULL;
-//	GPIO_InitStruct.Speed = GPIO_SPEED_FAST;
-//	GPIO_InitStruct.Alternate = GPIO_AF8_USART6;
-//	HAL_GPIO_Init(RX_TO_GPS.port, &GPIO_InitStruct);
-//
-//	//Setup RX Pin
-//	//It doesn't get set as an input?
-//	GPIO_InitStruct.Pin = TX_FROM_GPS.pin;
-//	GPIO_InitStruct.Alternate = GPIO_AF8_USART6;
-//	HAL_GPIO_Init(TX_FROM_GPS.port, &GPIO_InitStruct);
-//
-//
-////	//Configure NVIC
-////	HAL_NVIC_SetPriority(USART1_IRQn, 0, 1);
-////	HAL_NVIC_EnableIRQ(USART1_IRQn);
-////
-//	UartHandle.Instance = USART6;
-//	UartHandle.Init.BaudRate = 9600;
-//	UartHandle.Init.WordLength = UART_WORDLENGTH_8B;
-//	UartHandle.Init.StopBits = UART_STOPBITS_1;
-//	UartHandle.Init.Parity = UART_PARITY_NONE;
-//	UartHandle.Init.HwFlowCtl = UART_HWCONTROL_NONE;
-//	UartHandle.Init.Mode = UART_MODE_TX_RX;
-//	UartHandle.Init.OverSampling = UART_OVERSAMPLING_16;
-//
-//	if(HAL_UART_Init(&UartHandle) != HAL_OK)
-//	  {
-//	    trace_puts("UART didn't init rightly.");
-//	  }
-//
-//	TinyGPS_init();
-//
-//	while(1)
-//	  {
-//    if(HAL_UART_Receive(&UartHandle, (uint8_t *)aRxBuffer, 256, 5000) != HAL_OK)
-//      {
-//        trace_puts("UART recieve didn't work. No sir.");
-//      } else {
-//        trace_puts(aRxBuffer);
-//        for(int i = 0; i < 256; i++)
-//          TinyGPS_encode(aRxBuffer[i]);
-//
-//      }
-//	  }
-}
-
-enum signalPaths
-{
-  recieve_no_filter = 0,
-  recieve_with_filter = 1,
-  transmit_no_amp_no_filter = 2,
-  transmit_with_amp_no_filter = 3,
-  tramsmit_with_amp_with_filter = 4,
-  vna_reflected = 5,
-  vna_through = 6
-};
+//############################### HARDWARE CTRL#################################
 
 //Set up the signal path for various scenarios.
 void signalPath(int signalPath)
@@ -941,232 +726,47 @@ void signalPath(int signalPath)
   }
 }
 
-
-int
-main(int argc, char* argv[])
+//Seems to be working, higher numbers are higher gain. I'll need to work out the math on how much.
+void setGainPot(uint8_t a, uint8_t b)
 {
+	uint8_t i;
+	//pull NSS low
+	HAL_GPIO_WritePin(GAIN_POT_NSS.port, GAIN_POT_NSS.pin, 0);
 
-  /* Enable the CPU Cache */
-  CPU_CACHE_Enable();
-
-
-
-	HAL_Init();
-
-	//SystemClock_Config();
-
-	//HAL_RCC_OscConfig()
-	//	RCC_ClkInitStruct clockInitStructure;
-	//	clockInitStructure.
-	//	HAL_RCC_ClockConfig()
-	//	SystemClock_Config();
-
-	//	void (*systicker)();
-	//	systicker = &doNothing();
-	//
-	//
-	//	HAL_SYSTICK_Callback(systicker);
-	//hal_setSysTickCallback(doNothing());
-
-	// Send a greeting to the trace device (skipped on Release).
-#ifdef debug
-	trace_puts("Hello ARM World!");
-	trace_puts("Sweet, this works now!");
-#endif
-
-//	for(int i; i > 1000; i++)
-//	{
-//		trace_printf("%f = %f\n", (float)i, log((double)i));
-//	}
+	//choose first register
+	HAL_GPIO_WritePin(FILTER_GAIN_POT_MOSI.port, FILTER_GAIN_POT_MOSI.pin, 0);
+	HAL_GPIO_WritePin(FILTER_GAIN_POT_SCLK.port, FILTER_GAIN_POT_SCLK.pin, 0);
+	HAL_GPIO_WritePin(FILTER_GAIN_POT_SCLK.port, FILTER_GAIN_POT_SCLK.pin, 1);
 
 
-	// At this stage the system clock should have already been configured
-	// at high speed.
-#ifdef debug
-	trace_printf("System clock: %uHz\n", SystemCoreClock);
-#endif
-
-	setupPeripheralPower();
-
-	//initDdsPins();
-	hal_setupPins();
-	spi_init();
-
-//	configDMA(&SpiHandle );
-
-
-//I2C_HandleTypeDef hi2c;
-//HAL_I2C_MspInit(&hi2c);
-
-//__HAL_I2C_DISABLE(I2C2);
-//clearStuckBusyFlag();
-
-	RCC_PeriphCLKInitTypeDef i2cClk;
-	i2cClk.PeriphClockSelection = RCC_PERIPHCLK_I2C2;
-	i2cClk.I2c2ClockSelection = RCC_I2C2CLKSOURCE_PCLK1;
-
-HAL_RCCEx_PeriphCLKConfig(&i2cClk);
-
-handleI2C.Instance = I2C2;
-HAL_I2C_DeInit(&handleI2C);
-
-handleI2C.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
-//handleI2C.Init.ClockSpeed = 400000;
-//handleI2C.Init. = 400000;
-handleI2C.Init.DualAddressMode = I2C_DUALADDRESS_DISABLED;
-//handleI2C.Init.DutyCycle = I2C_DUTYCYCLE_16_9;
-//handleI2C.Init.Timing = I2C_ .DutyCycle = I2C_DUTYCYCLE_16_9;
-handleI2C.Init.GeneralCallMode = I2C_GENERALCALL_DISABLED;
-handleI2C.Init.NoStretchMode = I2C_NOSTRETCH_DISABLED;
-handleI2C.Init.OwnAddress1 = 0x30F;
-handleI2C.Init.OwnAddress2 = 0xFE;
-handleI2C.Init.Timing = ((uint32_t)0x40912732); //Not sure how this is calculated, taken from EVAL example
-
-
-if(HAL_I2C_Init(&handleI2C) != HAL_OK)
-  {
-    trace_puts("I2C didn't Init correctly");
-
-  }
-//handleI2C.Instance->SR2 = 0; //What the heck is wrong with this thing?!
-//clearStuckBusyFlag();
-
-HAL_StatusTypeDef result = HAL_ERROR;
-
-while(result!= HAL_OK)
-  result = HAL_I2C_IsDeviceReady(&handleI2C, (0x70 << 1), 100, 100); //We need to shift the address to the left for it to work (because of the R/W bit)
-
-//HAL_I2C_Master_Transmit(&hi2c, 230, 0x10, 1, 1000);  //write_Si5338(230, 0x10); //OEB_ALL = 1
-
-//*handleI2C = hi2c;
-
-//HAL_I2C_Master_Transmit(&handleI2C, 230, 0x4F, 1, 1000);  //write_Si5338(230, 0x10); //OEB_ALL = 1
-//HAL_I2C_Master_Transmit(handleI2C, 230, 0x4F, 1, 1000);  //write_Si5338(230, 0x10); //OEB_ALL = 1
-//handleI2C = &hi2c;
-//HAL_I2C_Master_Transmit(&handleI2C, 230, 0x4F, 1, 1000);  //write_Si5338(230, 0x10); //OEB_ALL = 1
-//HAL_I2C_Master_Transmit(handleI2C, 230, 0x4F, 1, 1000);  //write_Si5338(230, 0x10); //OEB_ALL = 1
-
-i2cSetup();
-setFreq(vfoAFrequency);
-//i2cLoop();
-
-
-//trace_puts(( == HAL_OK ? "SI5338 Ready" : "SI5338 Not ready"));
-
-//HAL_I2C_MspInit(&hi2c);
-
-
-
-	timer_start();
-
-	blink_led_init();
-	blink_led_on();
-
-	populateCoeficients(filterUpperLimit - filterLowerLimit, mode, filterLowerLimit);
-
-	initDac1();
-	Encoder();
-
-	Adafruit_ILI9340_begin();
-	Adafruit_ILI9340_setRotation(1);
-	//Adafruit_GFX_fillScreen(ILI9340_BLACK);
-	Adafruit_GFX_fillScreen(ILI9340_BLACK);
-
-	Adafruit_GFX_setTextSize(3);
-	Adafruit_GFX_setTextWrap(1);
-	Adafruit_GFX_setTextColor(ILI9340_WHITE, ILI9340_BLACK);
-	Adafruit_ILI9340_setVerticalScrollDefinition(0,120,200);
-
-	initAdc();
-	adcConfigured = 1;
-	adcStartConversion();
-
-	//TIM_setup();
-	//TIM_Config();
-	TIM_Try();
-
-	//long long timeMeasurement = 0;
-
-	updateDisplay(1);
-
-
-
-	setGainPot(200, 200);
-
-	//testing Uart
-	configUartPeripheral();
-//	while(1)
-//	{
-//	      //HAL_UART_Transmit_IT(&UartHandle, (uint8_t*)aTxBuffer, 16);
-//
-//		hal_delay_ms(100);
-//	}
-
-	//MAIN LOOP - Lowest Priority
-	while(1)
+	for(i = 0; i < 8; i++)
 	{
-		//TODO: Should I shift away from 0Hz? to get away from 1/f noise? It didn't LOOK bad, but maybe it is negatively effecting things.
-		//I could do something where the dial moves around on screen, but if you get too close to the edge, the DDSs start moving the frequency
-		//Hmm, I think that's kind of a cool idea. It would be cool in two ways: it would allow you to shift the IF so you could get away from
-		//birdies, and it would mean that while tuning around locally, the waterfall would stay aligned in a useful way. Eventually, when I have
-		//sufficient display performance, I'd like to move (and scale, if applicable) the waterfall so it is properly aligned.
-
-		//Speaking of 1/f noise. It doesn't seem to be much of an issue on this radio, I wonder why? Did I design something right?
-			//Update: Not sure that the 1/f noise is as small an issue as I thought. It popped up when I was out in the field.
-			//Maybe the 1/f noise is masked by all the noise in my neighborhood?
-		//Also, early on, I thought it had an issue with microphonics, but it turned out that it was the connection to the computer.
-		//Also since this is a form of direct conversion receiver (two of them together) I was worried about AM broadcast interference
-		//but I haven't noticed any, again, maybe I did something right? Beginner's luck?
-
-		//HAL_UART_Receive_IT(&UartHandle, (uint8_t*)aRxBuffer, 16);
-
-		//int* p = UartHandle.pRxBuffPtr;
-		//int* q = &aRxBuffer;
-		//int difference = p- q;
-
-
-		updateMenu();
-		updateDisplay(0);
-		drawWaterfall();
-		drawSMeter();
-
-		Adafruit_GFX_fillRect(310, 0, 3, 3, HAL_GPIO_ReadPin(PADDLE_THUMB_NC.port, PADDLE_THUMB_NC.pin) ? ILI9340_RED : ILI9340_BLUE);
-		Adafruit_GFX_fillRect(310, 4, 3, 3, HAL_GPIO_ReadPin(PADDLE_INDEX_NC.port, PADDLE_INDEX_NC.pin) ? ILI9340_RED : ILI9340_BLUE);
-		Adafruit_GFX_fillRect(310, 8, 3, 3, HAL_GPIO_ReadPin(PADDLE_THUMB_NO.port, PADDLE_THUMB_NO.pin) ? ILI9340_RED : ILI9340_BLUE);
-		Adafruit_GFX_fillRect(310, 12, 3, 3, HAL_GPIO_ReadPin(PADDLE_INDEX_NO.port, PADDLE_INDEX_NO.pin) ? ILI9340_RED : ILI9340_BLUE);
-
-		HAL_GPIO_WritePin(RED_LED.port, RED_LED.pin, HAL_GPIO_ReadPin(GPS_PPS.port, GPS_PPS.pin));
-
-		if(!HAL_GPIO_ReadPin(PADDLE_THUMB_NO.port, PADDLE_THUMB_NO.pin) && !HAL_GPIO_ReadPin(PADDLE_INDEX_NO.port, PADDLE_INDEX_NO.pin))
-		//if(1) //I am locking it in transmit for some testing.
-		{
-			transmitting = 1;
-			signalPath(transmit_no_amp_no_filter);
-			//signalPath(transmit_with_amp_no_filter);
-//	        HAL_GPIO_WritePin(DAC_MUX.port, DAC_MUX.pin, 1); //0 = speaker/earphone. 1=TX Drivers
-////	        HAL_GPIO_WritePin(RX_MUX.port, RX_MUX.pin, 1); //Active Low
-////	        HAL_GPIO_WritePin(TX_MUX.port, TX_MUX.pin, 0); //Active Low
-//	        HAL_GPIO_WritePin(AMP_SWITCH_A.port, AMP_SWITCH_A.pin, 1); //Route through amp.
-//	        HAL_GPIO_WritePin(AMP_SWITCH_B.port, AMP_SWITCH_B.pin, 0); //always reverse of above.
-//	        HAL_GPIO_WritePin(AMP_POWER.port, AMP_POWER.pin, 0); //0 is on.
-//	        //tone = 200;
-	        tone = 0;
-		} else {
-			transmitting = 0;
-			signalPath(recieve_no_filter);
-//	        HAL_GPIO_WritePin(DAC_MUX.port, DAC_MUX.pin, 0); //0 = speaker/earphone. 1=TX Drivers
-////	        HAL_GPIO_WritePin(RX_MUX.port, RX_MUX.pin, 0); //Active Low
-////	        HAL_GPIO_WritePin(TX_MUX.port, TX_MUX.pin, 1); //Active Low
-//	        HAL_GPIO_WritePin(AMP_SWITCH_A.port, AMP_SWITCH_A.pin, 0); //Bypass amp.
-//	        HAL_GPIO_WritePin(AMP_SWITCH_B.port, AMP_SWITCH_B.pin, 1); //always reverse of above.
-//	        HAL_GPIO_WritePin(AMP_POWER.port, AMP_POWER.pin, 1); //1 is off.
-//	        tone = 0;
-		}
+		HAL_GPIO_WritePin(FILTER_GAIN_POT_MOSI.port, FILTER_GAIN_POT_MOSI.pin, (a >> (7-i)) & 1);
+		HAL_GPIO_WritePin(FILTER_GAIN_POT_SCLK.port, FILTER_GAIN_POT_SCLK.pin, 0);
+		HAL_GPIO_WritePin(FILTER_GAIN_POT_SCLK.port, FILTER_GAIN_POT_SCLK.pin, 1);
 	}
+
+	HAL_GPIO_WritePin(GAIN_POT_NSS.port, GAIN_POT_NSS.pin, 1);
+
+	HAL_GPIO_WritePin(GAIN_POT_NSS.port, GAIN_POT_NSS.pin, 0);
+
+	//choose second register
+	HAL_GPIO_WritePin(FILTER_GAIN_POT_MOSI.port, FILTER_GAIN_POT_MOSI.pin, 1);
+	HAL_GPIO_WritePin(FILTER_GAIN_POT_SCLK.port, FILTER_GAIN_POT_SCLK.pin, 0);
+	HAL_GPIO_WritePin(FILTER_GAIN_POT_SCLK.port, FILTER_GAIN_POT_SCLK.pin, 1);
+
+
+	for(i = 0; i < 8; i++)
+	{
+		HAL_GPIO_WritePin(FILTER_GAIN_POT_MOSI.port, FILTER_GAIN_POT_MOSI.pin, (b >> (7-i)) & 1);
+		HAL_GPIO_WritePin(FILTER_GAIN_POT_SCLK.port, FILTER_GAIN_POT_SCLK.pin, 0);
+		HAL_GPIO_WritePin(FILTER_GAIN_POT_SCLK.port, FILTER_GAIN_POT_SCLK.pin, 1);
+	}
+
+	HAL_GPIO_WritePin(GAIN_POT_NSS.port, GAIN_POT_NSS.pin, 1);
+
 }
 
-float passBandRms = 0;
-int lastSMeterBarWidth = 0;
 void drawSMeter(void)
 {
 
@@ -1180,21 +780,7 @@ void drawSMeter(void)
 	lastSMeterBarWidth = width;
 }
 
-enum menuItems
-{
-  volumeMenuItem = 0,
-  modeMenuItem,
-  megahertzMenuItem,
-  hundredKilohertzMenuItem,
-  tenKilohertzMenuItem,
-  kilohertzMenuItem,
-  hundredHertzMenuItem,
-  tenHertzMenuItem,
-  hertzMenuItem,
-  filterLowMenuItem,
-  filterHighMenuItem,
-  offMenuItem
-};
+
 
 //enum menuItems
 //{
@@ -1317,21 +903,6 @@ float calculateRmsOfSample(float* samples, int length)
 	arm_sqrt_f32(accumulatedSquares, &result);
 	return result;
 }
-
-#define freqVOffset 108     //120 - (8*3/2)
-#define freqHOffset 142
-
-
-//TODO: Should I make a menuItem struct? Would that be helpful? The menus are a pain right now...
-uint8_t redItems[30];
-
-enum modes
-{
-	LSB = 0,
-	USB = 1,
-	AM = 2
-};
-
 
 
 void updateDisplay(uint8_t force)
@@ -1533,7 +1104,7 @@ void updateDisplay(uint8_t force)
 	displayUpdating = 0;
 }
 
-int newWaterFallData = 0;
+
 void drawWaterfall(void)
 {
   if(newWaterFallData == 1)
@@ -1867,11 +1438,7 @@ void drawNumberSmall(char c, uint16_t x, uint16_t y, uint16_t tintMask)
 	}
 }
 
-//TIM_TimeBaseInitTypeDef timeBaseStructure;
-//
-//TIM_OC_InitTypeDef   tsConfig;
-//#define  PULSE1_VALUE       40961       /* Capture Compare 1 Value  */
-uint32_t uwPrescalerValue = 0;
+
 //void TIM_setup()
 //{
 //	  /*##-1- Configure the TIM peripheral #######################################*/
@@ -1968,11 +1535,7 @@ uint32_t uwPrescalerValue = 0;
 //
 //}
 
-TIM_TypeDef timTimBase;
-//TIM_HandleTypeDef timHandle;
-/* Definition for TIMx's NVIC */
-#define TIMx_IRQn                      TIM3_IRQn //TIM3_IRQn
-#define TIMx_IRQHandler                TIM3_IRQHandler
+
 void TIM_Try(void)
 {
 
@@ -1995,41 +1558,29 @@ void TIM_Try(void)
 
 	HAL_TIM_Base_Start_IT(&TimHandle);
 
-	  /*##-2- Configure the NVIC for TIMx #########################################*/
-	  /* Set the TIMx priority */
-	  HAL_NVIC_SetPriority(TIMx_IRQn, 0, 1);
+	/*##-2- Configure the NVIC for TIMx #########################################*/
+	/* Set the TIMx priority */
+	HAL_NVIC_SetPriority(TIMx_IRQn, 0, 1);
 
-	  /* Enable the TIMx global Interrupt */
-HAL_NVIC_EnableIRQ(TIMx_IRQn);
+	/* Enable the TIMx global Interrupt */
+	HAL_NVIC_EnableIRQ(TIMx_IRQn);
 
-
-
-
-	  __TIM4_CLK_ENABLE();
-		TimHandle4.Instance = TIM4;
-		TimHandle4.Init.CounterMode = TIM_COUNTERMODE_UP;
-		TimHandle4.Init.Period = 1050; //was 1050, 800 works okay, not in AM though.
-		TimHandle4.Init.Prescaler = uwPrescalerValue;
-		TimHandle4.Init.ClockDivision = 0;
+	__TIM4_CLK_ENABLE();
+	TimHandle4.Instance = TIM4;
+	TimHandle4.Init.CounterMode = TIM_COUNTERMODE_UP;
+	TimHandle4.Init.Period = 1050; //was 1050, 800 works okay, not in AM though.
+	TimHandle4.Init.Prescaler = uwPrescalerValue;
+	TimHandle4.Init.ClockDivision = 0;
 
 	HAL_TIM_Base_Init(&TimHandle4);
 	HAL_TIM_Base_Start_IT(&TimHandle4);
 
-	  /*##-2- Configure the NVIC for TIMx #########################################*/
-	  /* Set the TIMx priority */
-	  HAL_NVIC_SetPriority(30 /*TIM4_IRQn*/, 2, 4);
+	/*##-2- Configure the NVIC for TIMx #########################################*/
+	/* Set the TIMx priority */
+	HAL_NVIC_SetPriority(30 /*TIM4_IRQn*/, 2, 4);
 
-	  /* Enable the TIMx global Interrupt */
-HAL_NVIC_EnableIRQ(TIM4_IRQn);
-
-
-
-//	int tim3;
-//	while(1)
-//	{
-//		 tim3 = timTryHandle.Instance->CNT;
-//	}
-
+	/* Enable the TIMx global Interrupt */
+	HAL_NVIC_EnableIRQ(TIM4_IRQn);
 }
 
 void TIM3_IRQHandler(void)
@@ -2043,52 +1594,10 @@ void TIM4_IRQHandler(void)
   HAL_TIM_IRQHandler(&TimHandle4);
 }
 
-int ledState = 0;
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
 	captureSamples();
-//	doNothing();
-//	if(ledState)
-//	{
-//		blink_led_off();
-//		ledState = 0;
-//	}
-//	else
-//	{
-//		blink_led_on();
-//		ledState = 1;
-//	}
 }
-
-//void rectToPolar(float real, float imag, float mag, float angle)
-//{
-//	mag = sqrtf((real * real) + (imag * imag));
-//	angle = atan2f(imag,real);
-//}
-//
-//void polarToRect(float mag, float angle, float real, float imag)
-//{
-//	real = mag * cosf(angle);
-//	imag = mag * sinf(angle);
-//}
-
-/* Definition for DACx clock resources */
-#define DACx                            DAC
-#define DACx_CLK_ENABLE()               __DAC_CLK_ENABLE()
-#define DACx_CHANNEL_GPIO_CLK_ENABLE()  __GPIOA_CLK_ENABLE()
-
-#define DACx_FORCE_RESET()              __DAC_FORCE_RESET()
-#define DACx_RELEASE_RESET()            __DAC_RELEASE_RESET()
-
-/* Definition for ADCx Channel Pin */
-#define DACx_CHANNEL_PIN                GPIO_PIN_4
-#define DACx_CHANNEL_GPIO_PORT          GPIOA
-
-/* Definition for ADCx's Channel */
-#define DACx_CHANNEL                    DAC_CHANNEL_1
-
-DAC_HandleTypeDef    DacHandle;
-static DAC_ChannelConfTypeDef dacSConfig;
 
 void initDac1()
 {
@@ -2169,11 +1678,6 @@ void dac2SetValue(uint16_t value)
 	HAL_DAC_SetValue(&DacHandle, DAC_CHANNEL_2, DAC_ALIGN_12B_R, value);
 }
 
-/**
-  * @brief  CPU L1-Cache enable.
-  * @param  None
-  * @retval None
-  */
 static void CPU_CACHE_Enable(void)
 {
   /* Enable I-Cache */
@@ -2188,6 +1692,221 @@ void shutDown(void)
 	HAL_PWR_EnterSTANDBYMode();
 }
 
-#pragma GCC diagnostic pop
 
-// ----------------------------------------------------------------------------
+
+
+//##################### M A I N ######################
+
+
+int
+main(int argc, char* argv[])
+{
+
+  /* Enable the CPU Cache */
+  CPU_CACHE_Enable();
+
+
+
+	HAL_Init();
+
+	//SystemClock_Config();
+
+	//HAL_RCC_OscConfig()
+	//	RCC_ClkInitStruct clockInitStructure;
+	//	clockInitStructure.
+	//	HAL_RCC_ClockConfig()
+	//	SystemClock_Config();
+
+	//	void (*systicker)();
+	//	systicker = &doNothing();
+	//
+	//
+	//	HAL_SYSTICK_Callback(systicker);
+	//hal_setSysTickCallback(doNothing());
+
+	// Send a greeting to the trace device (skipped on Release).
+#ifdef debug
+	trace_puts("Hello ARM World!");
+	trace_puts("Sweet, this works now!");
+#endif
+
+//	for(int i; i > 1000; i++)
+//	{
+//		trace_printf("%f = %f\n", (float)i, log((double)i));
+//	}
+
+
+	// At this stage the system clock should have already been configured
+	// at high speed.
+#ifdef debug
+	trace_printf("System clock: %uHz\n", SystemCoreClock);
+#endif
+
+	setupPeripheralPower();
+
+	//initDdsPins();
+	hal_setupPins();
+	spi_init();
+
+//	configDMA(&SpiHandle );
+
+
+//I2C_HandleTypeDef hi2c;
+//HAL_I2C_MspInit(&hi2c);
+
+//__HAL_I2C_DISABLE(I2C2);
+//clearStuckBusyFlag();
+
+	RCC_PeriphCLKInitTypeDef i2cClk;
+	i2cClk.PeriphClockSelection = RCC_PERIPHCLK_I2C2;
+	i2cClk.I2c2ClockSelection = RCC_I2C2CLKSOURCE_PCLK1;
+
+HAL_RCCEx_PeriphCLKConfig(&i2cClk);
+
+handleI2C.Instance = I2C2;
+HAL_I2C_DeInit(&handleI2C);
+
+handleI2C.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
+//handleI2C.Init.ClockSpeed = 400000;
+//handleI2C.Init. = 400000;
+handleI2C.Init.DualAddressMode = I2C_DUALADDRESS_DISABLED;
+//handleI2C.Init.DutyCycle = I2C_DUTYCYCLE_16_9;
+//handleI2C.Init.Timing = I2C_ .DutyCycle = I2C_DUTYCYCLE_16_9;
+handleI2C.Init.GeneralCallMode = I2C_GENERALCALL_DISABLED;
+handleI2C.Init.NoStretchMode = I2C_NOSTRETCH_DISABLED;
+handleI2C.Init.OwnAddress1 = 0x30F;
+handleI2C.Init.OwnAddress2 = 0xFE;
+handleI2C.Init.Timing = ((uint32_t)0x40912732); //Not sure how this is calculated, taken from EVAL example
+
+
+if(HAL_I2C_Init(&handleI2C) != HAL_OK)
+  {
+    trace_puts("I2C didn't Init correctly");
+
+  }
+//handleI2C.Instance->SR2 = 0; //What the heck is wrong with this thing?!
+//clearStuckBusyFlag();
+
+HAL_StatusTypeDef result = HAL_ERROR;
+
+while(result!= HAL_OK)
+  result = HAL_I2C_IsDeviceReady(&handleI2C, (0x70 << 1), 100, 100); //We need to shift the address to the left for it to work (because of the R/W bit)
+
+//HAL_I2C_Master_Transmit(&hi2c, 230, 0x10, 1, 1000);  //write_Si5338(230, 0x10); //OEB_ALL = 1
+
+//*handleI2C = hi2c;
+
+//HAL_I2C_Master_Transmit(&handleI2C, 230, 0x4F, 1, 1000);  //write_Si5338(230, 0x10); //OEB_ALL = 1
+//HAL_I2C_Master_Transmit(handleI2C, 230, 0x4F, 1, 1000);  //write_Si5338(230, 0x10); //OEB_ALL = 1
+//handleI2C = &hi2c;
+//HAL_I2C_Master_Transmit(&handleI2C, 230, 0x4F, 1, 1000);  //write_Si5338(230, 0x10); //OEB_ALL = 1
+//HAL_I2C_Master_Transmit(handleI2C, 230, 0x4F, 1, 1000);  //write_Si5338(230, 0x10); //OEB_ALL = 1
+
+i2cSetup();
+setFreq(vfoAFrequency);
+//i2cLoop();
+
+
+//trace_puts(( == HAL_OK ? "SI5338 Ready" : "SI5338 Not ready"));
+
+//HAL_I2C_MspInit(&hi2c);
+
+
+
+	timer_start();
+
+	populateCoeficients(filterUpperLimit - filterLowerLimit, mode, filterLowerLimit);
+
+	initDac1();
+	Encoder();
+
+	Adafruit_ILI9340_begin();
+	Adafruit_ILI9340_setRotation(1);
+	//Adafruit_GFX_fillScreen(ILI9340_BLACK);
+	Adafruit_GFX_fillScreen(ILI9340_BLACK);
+
+	Adafruit_GFX_setTextSize(3);
+	Adafruit_GFX_setTextWrap(1);
+	Adafruit_GFX_setTextColor(ILI9340_WHITE, ILI9340_BLACK);
+	Adafruit_ILI9340_setVerticalScrollDefinition(0,120,200);
+
+	initAdc();
+	adcConfigured = 1;
+	adcStartConversion();
+
+	//TIM_setup();
+	//TIM_Config();
+	TIM_Try();
+
+	//long long timeMeasurement = 0;
+
+	updateDisplay(1);
+
+
+
+	setGainPot(200, 200);
+
+
+	//MAIN LOOP - Lowest Priority
+	while(1)
+	{
+		//TODO: Should I shift away from 0Hz? to get away from 1/f noise? It didn't LOOK bad, but maybe it is negatively effecting things.
+		//I could do something where the dial moves around on screen, but if you get too close to the edge, the DDSs start moving the frequency
+		//Hmm, I think that's kind of a cool idea. It would be cool in two ways: it would allow you to shift the IF so you could get away from
+		//birdies, and it would mean that while tuning around locally, the waterfall would stay aligned in a useful way. Eventually, when I have
+		//sufficient display performance, I'd like to move (and scale, if applicable) the waterfall so it is properly aligned.
+
+		//Speaking of 1/f noise. It doesn't seem to be much of an issue on this radio, I wonder why? Did I design something right?
+			//Update: Not sure that the 1/f noise is as small an issue as I thought. It popped up when I was out in the field.
+			//Maybe the 1/f noise is masked by all the noise in my neighborhood?
+		//Also, early on, I thought it had an issue with microphonics, but it turned out that it was the connection to the computer.
+		//Also since this is a form of direct conversion receiver (two of them together) I was worried about AM broadcast interference
+		//but I haven't noticed any, again, maybe I did something right? Beginner's luck?
+
+		//HAL_UART_Receive_IT(&UartHandle, (uint8_t*)aRxBuffer, 16);
+
+		//int* p = UartHandle.pRxBuffPtr;
+		//int* q = &aRxBuffer;
+		//int difference = p- q;
+
+
+		updateMenu();
+		updateDisplay(0);
+		drawWaterfall();
+		drawSMeter();
+
+		Adafruit_GFX_fillRect(310, 0, 3, 3, HAL_GPIO_ReadPin(PADDLE_THUMB_NC.port, PADDLE_THUMB_NC.pin) ? ILI9340_RED : ILI9340_BLUE);
+		Adafruit_GFX_fillRect(310, 4, 3, 3, HAL_GPIO_ReadPin(PADDLE_INDEX_NC.port, PADDLE_INDEX_NC.pin) ? ILI9340_RED : ILI9340_BLUE);
+		Adafruit_GFX_fillRect(310, 8, 3, 3, HAL_GPIO_ReadPin(PADDLE_THUMB_NO.port, PADDLE_THUMB_NO.pin) ? ILI9340_RED : ILI9340_BLUE);
+		Adafruit_GFX_fillRect(310, 12, 3, 3, HAL_GPIO_ReadPin(PADDLE_INDEX_NO.port, PADDLE_INDEX_NO.pin) ? ILI9340_RED : ILI9340_BLUE);
+
+		HAL_GPIO_WritePin(RED_LED.port, RED_LED.pin, HAL_GPIO_ReadPin(GPS_PPS.port, GPS_PPS.pin));
+
+		if(!HAL_GPIO_ReadPin(PADDLE_THUMB_NO.port, PADDLE_THUMB_NO.pin) && !HAL_GPIO_ReadPin(PADDLE_INDEX_NO.port, PADDLE_INDEX_NO.pin))
+		//if(1) //I am locking it in transmit for some testing.
+		{
+			transmitting = 1;
+			signalPath(transmit_no_amp_no_filter);
+			//signalPath(transmit_with_amp_no_filter);
+//	        HAL_GPIO_WritePin(DAC_MUX.port, DAC_MUX.pin, 1); //0 = speaker/earphone. 1=TX Drivers
+////	        HAL_GPIO_WritePin(RX_MUX.port, RX_MUX.pin, 1); //Active Low
+////	        HAL_GPIO_WritePin(TX_MUX.port, TX_MUX.pin, 0); //Active Low
+//	        HAL_GPIO_WritePin(AMP_SWITCH_A.port, AMP_SWITCH_A.pin, 1); //Route through amp.
+//	        HAL_GPIO_WritePin(AMP_SWITCH_B.port, AMP_SWITCH_B.pin, 0); //always reverse of above.
+//	        HAL_GPIO_WritePin(AMP_POWER.port, AMP_POWER.pin, 0); //0 is on.
+//	        //tone = 200;
+	        tone = 0;
+		} else {
+			transmitting = 0;
+			signalPath(recieve_no_filter);
+//	        HAL_GPIO_WritePin(DAC_MUX.port, DAC_MUX.pin, 0); //0 = speaker/earphone. 1=TX Drivers
+////	        HAL_GPIO_WritePin(RX_MUX.port, RX_MUX.pin, 0); //Active Low
+////	        HAL_GPIO_WritePin(TX_MUX.port, TX_MUX.pin, 1); //Active Low
+//	        HAL_GPIO_WritePin(AMP_SWITCH_A.port, AMP_SWITCH_A.pin, 0); //Bypass amp.
+//	        HAL_GPIO_WritePin(AMP_SWITCH_B.port, AMP_SWITCH_B.pin, 1); //always reverse of above.
+//	        HAL_GPIO_WritePin(AMP_POWER.port, AMP_POWER.pin, 1); //1 is off.
+//	        tone = 0;
+		}
+	}
+}
+
