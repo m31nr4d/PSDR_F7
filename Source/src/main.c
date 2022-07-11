@@ -412,6 +412,11 @@ void captureSamples()
 			}
 
 			break;
+	    default:
+	    	#ifdef debug
+	        trace_puts("Bad Sample Bank");
+	      	#endif
+	        break;
 		}
 		//dac1SetValue(outputSamplesA[sampleIndex*2]);
 
@@ -438,7 +443,12 @@ void captureSamples()
 				sampleBankCReady = 1;
 				sampleBank = 0;
 				zeroSampleBank(samplesA);
-			break;
+				break;
+		    default:
+		    	#ifdef debug
+		        trace_puts("Bad Sample Bank");
+		      	#endif
+		        break;
 			}
 
 
@@ -519,6 +529,11 @@ void populateCoeficients(int bandwidth, int sideband, int offset)
 			else
 				fftFilterCoeficient[i] = 0;
 			break;
+	    default:
+	    	#ifdef debug
+	        trace_puts("Bad Side Band");
+	      	#endif
+	        break;
 		}
 	}
 	fftFilterCoeficient[FFT_BUFFER_SIZE / 2] = 0;
@@ -719,10 +734,10 @@ void signalPath(int signalPath)
     case vna_through:
 
       break;
-//    default:
-//      #ifdef debug
-//        trace_puts("Bad signalPath Value");
-//      #endif
+    default:
+      #ifdef debug
+        trace_puts("Bad signalPath Value");
+      #endif
   }
 }
 
@@ -883,8 +898,11 @@ void updateMenu()
 			shutDown();
 		}
 		break;
-	default:
-		break;
+    default:
+    	#ifdef debug
+        trace_puts("Bad Menu Item");
+      	#endif
+        break;
 	}
 }
 
@@ -1071,6 +1089,11 @@ void updateDisplay(uint8_t force)
 				Adafruit_GFX_fillRect(121, filterLowerLimit/2 + 120, 3, (filterUpperLimit/2 - filterLowerLimit/2), ILI9340_WHITE);
 				Adafruit_GFX_fillRect(121, 120 - (filterUpperLimit/2), 3, (filterUpperLimit/2 - filterLowerLimit/2), ILI9340_WHITE);
 				break;
+		    default:
+		    	#ifdef debug
+		        trace_puts("Bad Filter Mode");
+		      	#endif
+		        break;
 		}
 		redrawFilterBar = 0;
 	}
@@ -1092,6 +1115,11 @@ void updateDisplay(uint8_t force)
 		case AM:
 			Adafruit_GFX_drawColorBitmap(196, 91, bitmapAM, 28, 9, menuPos == modeMenuItem ? MASKRED : MASKWHITE);
 			break;
+	    default:
+	    	#ifdef debug
+	        trace_puts("Bad Filter Mode");
+	      	#endif
+	        break;
 		}
 
 		modeLast = mode;
@@ -1781,9 +1809,11 @@ handleI2C.Init.Timing = ((uint32_t)0x40912732); //Not sure how this is calculate
 
 if(HAL_I2C_Init(&handleI2C) != HAL_OK)
   {
+#ifdef debug
     trace_puts("I2C didn't Init correctly");
-
+#endif
   }
+
 //handleI2C.Instance->SR2 = 0; //What the heck is wrong with this thing?!
 //clearStuckBusyFlag();
 
