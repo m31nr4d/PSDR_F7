@@ -10,6 +10,7 @@
 /dts-v1/;
 #include <st/f7/stm32f756Xg.dtsi>
 #include <st/f7/stm32f756vgtx-pinctrl.dtsi>
+#include <zephyr/dt-bindings/adc/adc.h>
 #include <zephyr/dt-bindings/input/input-event-codes.h>
 
 / {
@@ -53,6 +54,15 @@
 		led1 = &red_led;
 		sw0 = &boot1_pin;
 	};
+
+	/*
+	 * App-facing handle on the RX I/Q channels. Refer to these via
+	 * ADC_DT_SPEC_GET_BY_IDX(DT_PATH(zephyr_user), 0) for I and 1 for Q.
+	 */
+	zephyr,user {
+		io-channels = <&adc1 3>, <&adc2 2>;
+		io-channel-names = "rx_i", "rx_q";
+	};
 };
 
 &clk_hse {
@@ -82,4 +92,44 @@
 	pinctrl-names = "default";
 	current-speed = <115200>;
 	status = "okay";
+};
+
+/*
+ * RX I/Q: Tayloe detector outputs land on PA3 (I) and PA2 (Q).
+ * Hardware-correct mapping is ADC1_IN3 + ADC2_IN2. The original
+ * firmware used ADC3 for Q which is a silent bug — PA2 is not
+ * routed to ADC3 on the F756.
+ */
+&adc1 {
+	pinctrl-0 = <&adc1_in3_pa3>;
+	pinctrl-names = "default";
+	st,adc-prescaler = <4>;
+	status = "okay";
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	channel@3 {
+		reg = <3>;
+		zephyr,gain = "ADC_GAIN_1";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME(ADC_ACQ_TIME_TICKS, 15)>;
+		zephyr,resolution = <12>;
+	};
+};
+
+&adc2 {
+	pinctrl-0 = <&adc2_in2_pa2>;
+	pinctrl-names = "default";
+	st,adc-prescaler = <4>;
+	status = "okay";
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	channel@2 {
+		reg = <2>;
+		zephyr,gain = "ADC_GAIN_1";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME(ADC_ACQ_TIME_TICKS, 15)>;
+		zephyr,resolution = <12>;
+	};
 };
