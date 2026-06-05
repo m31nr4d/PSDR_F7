@@ -17,6 +17,8 @@
 #include <zephyr/drivers/adc.h>
 #include <zephyr/drivers/gpio.h>
 
+#include "dsp.h"
+
 #define LED0_NODE DT_ALIAS(led0)
 static const struct gpio_dt_spec led0 = GPIO_DT_SPEC_GET(LED0_NODE, gpios);
 
@@ -101,11 +103,21 @@ int main(void)
 		return 0;
 	}
 
-	printk("PSDR-F7 Phase 2 / Tier 1 — free-running I/Q sampler\n");
+	printk("PSDR-F7 Phase 2/3 — free-running I/Q sampler + DSP self-test\n");
 	printk("RX_I = ADC1 ch%u (PA3), RX_Q = ADC2 ch%u (PA2)\n",
 	       rx_i.channel_id, rx_q.channel_id);
 	printk("sysclk = %u Hz, telemetry every %u ms\n",
 	       sys_clock_hw_cycles_per_sec(), TELEMETRY_PERIOD_MS);
+
+	psdr_dsp_init();
+	psdr_dsp_set_filter(40, PSDR_SIDEBAND_USB, 8);
+
+	uint32_t t0 = k_cycle_get_32();
+	float self_test_rms = psdr_dsp_self_test();
+	uint32_t dt_cyc = k_cycle_get_32() - t0;
+	uint32_t dt_us = (uint32_t)k_cyc_to_us_floor64(dt_cyc);
+	printk("DSP self-test: impulse->iFFT RMS=%.4f (took %u us)\n",
+	       (double)self_test_rms, dt_us);
 
 	struct chan_stats si, sq;
 	chan_reset(&si);
