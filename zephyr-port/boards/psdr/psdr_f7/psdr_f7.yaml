@@ -1,0 +1,18 @@
+identifier: psdr_f7
+name: Portable SDR F7 (STM32F756VGTx)
+type: mcu
+arch: arm
+toolchain:
+  - zephyr
+  - gnuarmemb
+ram: 320
+flash: 1024
+supported:
+  - uart
+  - gpio
+  - adc
+  - dma
+  - dac
+  - i2c
+  - spi
+vendor: psdr

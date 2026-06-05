@@ -1,0 +1,3 @@
+if BOARD_PSDR_F7
+
+endif # BOARD_PSDR_F7

@@ -1,0 +1,6 @@
+board:
+  name: psdr_f7
+  full_name: Portable SDR F7
+  vendor: psdr
+  socs:
+    - name: stm32f756xx

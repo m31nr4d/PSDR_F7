@@ -1,0 +1,85 @@
+/*
+ * Portable SDR F7 — Michael R. Colton design, STM32F756VGTx, LQFP100.
+ * HSE 26 MHz on PH0/PH1, PLL → SYSCLK 216 MHz.
+ *
+ * Pin labels follow the original Hardware/STM32F756_Config.ioc.
+ * Phase 1 brings up: console UART + status LEDs. Display, ADC, DAC,
+ * I2C, SPI, timers all come later.
+ */
+
+/dts-v1/;
+#include <st/f7/stm32f756Xg.dtsi>
+#include <st/f7/stm32f756vgtx-pinctrl.dtsi>
+#include <zephyr/dt-bindings/input/input-event-codes.h>
+
+/ {
+	model = "Portable SDR F7";
+	compatible = "psdr,psdr-f7";
+
+	chosen {
+		zephyr,console = &usart1;
+		zephyr,shell-uart = &usart1;
+		zephyr,sram = &sram0;
+		zephyr,flash = &flash0;
+		zephyr,dtcm = &dtcm;
+	};
+
+	leds: leds {
+		compatible = "gpio-leds";
+
+		white_led: led_white {
+			gpios = <&gpioe 12 GPIO_ACTIVE_HIGH>;
+			label = "LED_WHITE";
+		};
+
+		red_led: led_red {
+			gpios = <&gpioe 13 GPIO_ACTIVE_HIGH>;
+			label = "LED_RED";
+		};
+	};
+
+	gpio_keys {
+		compatible = "gpio-keys";
+
+		boot1_pin: boot1 {
+			gpios = <&gpioa 1 GPIO_ACTIVE_HIGH>;
+			label = "BOOT1";
+			zephyr,code = <INPUT_KEY_0>;
+		};
+	};
+
+	aliases {
+		led0 = &white_led;
+		led1 = &red_led;
+		sw0 = &boot1_pin;
+	};
+};
+
+&clk_hse {
+	clock-frequency = <DT_FREQ_M(26)>;
+	status = "okay";
+};
+
+&pll {
+	div-m = <13>;
+	mul-n = <216>;
+	div-p = <2>;
+	div-q = <9>;
+	clocks = <&clk_hse>;
+	status = "okay";
+};
+
+&rcc {
+	clocks = <&pll>;
+	clock-frequency = <DT_FREQ_M(216)>;
+	ahb-prescaler = <1>;
+	apb1-prescaler = <4>;
+	apb2-prescaler = <2>;
+};
+
+&usart1 {
+	pinctrl-0 = <&usart1_tx_pb6 &usart1_rx_pb7>;
+	pinctrl-names = "default";
+	current-speed = <115200>;
+	status = "okay";
+};
