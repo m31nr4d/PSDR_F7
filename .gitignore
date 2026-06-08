@@ -1,3 +1,6 @@
 
 Source/metrixpp.db
 Source/.DS_Store
+
+# Original Eclipse build objects — superseded by the Zephyr port
+Debug/
