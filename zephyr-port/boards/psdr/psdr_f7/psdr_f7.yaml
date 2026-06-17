@@ -11,8 +11,4 @@ supported:
   - uart
   - gpio
   - adc
-  - dma
-  - dac
-  - i2c
-  - spi
 vendor: psdr
