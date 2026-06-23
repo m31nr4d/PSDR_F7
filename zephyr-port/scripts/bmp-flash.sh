@@ -19,7 +19,7 @@
 #   BMP_DEV       — BMP GDB-server CDC device (auto-detected by default)
 #   FIRMWARE_ELF  — same as the positional arg
 
-set -uo pipefail
+set -euo pipefail
 
 ELF="${1:-${FIRMWARE_ELF:-$HOME/projects/zephyrproject/build/zephyr/zephyr.elf}}"
 

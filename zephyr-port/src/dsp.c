@@ -55,22 +55,21 @@ void psdr_dsp_apply_filter(float *samples, int shift)
 {
 	const int N = (int)PSDR_FFT_SIZE;
 
-	/* Complex multiply: filter_temp[2i..] = samples[2i..] * coef[2i..] */
+	/* Real-scalar multiply: filter_temp[2i..] = samples[2i..] * coef[i]
+	 * fft_filter_coef is a real mask (0.0 or 1.0 per bin) written by
+	 * psdr_dsp_set_filter with stride 1, NOT interleaved complex.
+	 * Reading coef[i*2+1] as 'ci' was wrong — it pulled a mask value
+	 * for a neighbouring bin and corrupted both output components.
+	 * Applying the real-mask convention also eliminates the imaginary-part
+	 * sign error noted in the earlier BUG-PORT comment (ci was never a
+	 * genuine imaginary coefficient). */
 	for (int i = 0; i < N; i++) {
 		float sr = samples[i * 2];
 		float si = samples[i * 2 + 1];
 		float cr = fft_filter_coef[i * 2];
-		float ci = fft_filter_coef[i * 2 + 1];
 
-		filter_temp[i * 2]     = sr * cr - si * ci;
-		/*
-		 * BUG-PORT: the original computes si*ci + sr*cr for the
-		 * imaginary part. A correct complex multiply would be
-		 * sr*ci + si*cr. Left as-is so the numerics match the
-		 * original firmware. Flip when verified on the signal
-		 * generator.
-		 */
-		filter_temp[i * 2 + 1] = si * ci + sr * cr;
+		filter_temp[i * 2]     = sr * cr;
+		filter_temp[i * 2 + 1] = si * cr;
 	}
 
 	const int B = (int)PSDR_FFT_BUFLEN;
